@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug cradio",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/cradio",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "RUST_LOG": "cradio=debug"
+            },
+            "terminal": "integrated",
+            "stopOnEntry": false,
+            "sourceLanguages": [
+                "rust"
+            ]
+        }
+    ]
+}
