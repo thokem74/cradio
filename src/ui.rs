@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState},
 };
 
-use crate::app::{App, AppMode, InputField};
+use crate::app::{App, AppMode, InputField, StationViewMode};
 
 const NEON_CYAN: Color = Color::Cyan;
 const NEON_MAGENTA: Color = Color::Magenta;
@@ -18,11 +18,11 @@ pub fn draw(frame: &mut Frame, app: &App, table_state: &mut TableState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Length(3), // now playing
-            Constraint::Length(5), // filters
-            Constraint::Min(5),    // station list
-            Constraint::Length(2), // footer / keybindings
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(5),
+            Constraint::Min(5),
+            Constraint::Length(2),
         ])
         .split(size);
 
@@ -65,10 +65,17 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
             station.country_code.clone()
         };
         Line::from(vec![
-            Span::styled("▶ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "▶ ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 truncate(&station.name, 40),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
             Span::styled(country, Style::default().fg(NEON_CYAN)),
@@ -82,21 +89,16 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
         )])
     };
 
-    let block_title = " Now Playing ";
-
-    let player_widget = Paragraph::new(content)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .title(block_title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green)),
-        );
+    let player_widget = Paragraph::new(content).alignment(Alignment::Left).block(
+        Block::default()
+            .title(" Now Playing ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green)),
+    );
     frame.render_widget(player_widget, area);
 }
 
 fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
-    // Split filter area into label row + input row
     let filter_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -146,12 +148,7 @@ fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_station_list(
-    frame: &mut Frame,
-    app: &App,
-    table_state: &mut TableState,
-    area: Rect,
-) {
+fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState, area: Rect) {
     let header_cells = ["Station Name", "Country", "Language", "Tags", "Bitrate"]
         .iter()
         .map(|h| {
@@ -163,23 +160,39 @@ fn draw_station_list(
         });
     let header = Row::new(header_cells).height(1).bottom_margin(0);
 
-    let rows: Vec<Row> = if app.loading {
+    let station_list = app.current_station_list();
+
+    let rows: Vec<Row> = if app.view_mode == StationViewMode::Favorites && app.favorites_loading {
+        vec![Row::new(vec![Cell::from(Span::styled(
+            "Loading favorites...",
+            Style::default().fg(Color::Yellow),
+        ))])]
+    } else if app.view_mode == StationViewMode::AllStations && app.loading {
         vec![Row::new(vec![Cell::from(Span::styled(
             "Loading stations...",
             Style::default().fg(Color::Yellow),
         ))])]
-    } else if let Some(err) = &app.error {
+    } else if let Some(err) = if app.view_mode == StationViewMode::Favorites {
+        app.favorites_error.as_ref()
+    } else {
+        app.error.as_ref()
+    } {
         vec![Row::new(vec![Cell::from(Span::styled(
             format!("Error: {}", err),
             Style::default().fg(Color::Red),
         ))])]
-    } else if app.stations.is_empty() {
+    } else if station_list.is_empty() {
+        let message = if app.view_mode == StationViewMode::Favorites {
+            "No favorites yet. Press Space to add one."
+        } else {
+            "No stations found. Try different filters."
+        };
         vec![Row::new(vec![Cell::from(Span::styled(
-            "No stations found. Try different filters.",
+            message,
             Style::default().fg(Color::DarkGray),
         ))])]
     } else {
-        app.stations
+        station_list
             .iter()
             .enumerate()
             .map(|(i, s)| {
@@ -188,9 +201,16 @@ fn draw_station_list(
                     .as_ref()
                     .map(|cs| cs.stationuuid == s.stationuuid)
                     .unwrap_or(false);
+                let is_favorite = app.is_favorite(&s.stationuuid);
 
-                let name_prefix = if is_playing { "▶ " } else { "  " };
-                let name = format!("{}{}", name_prefix, truncate(&s.name, 35));
+                let playing_prefix = if is_playing { "▶ " } else { "  " };
+                let favorite_prefix = if is_favorite { "★ " } else { "" };
+                let name = format!(
+                    "{}{}{}",
+                    playing_prefix,
+                    favorite_prefix,
+                    truncate(&s.name, 32)
+                );
                 let country = if s.country_code.is_empty() {
                     "N/A".to_string()
                 } else {
@@ -231,10 +251,15 @@ fn draw_station_list(
             .collect()
     };
 
-    let page_title = if app.total_pages > 0 {
-        format!(" Stations — Page {}/{} ", app.page, app.total_pages)
-    } else {
-        " Stations ".to_string()
+    let title = match app.view_mode {
+        StationViewMode::AllStations => {
+            if app.total_pages > 0 {
+                format!(" Stations — Page {}/{} ", app.page, app.total_pages)
+            } else {
+                " Stations ".to_string()
+            }
+        }
+        StationViewMode::Favorites => " Favorites ".to_string(),
     };
 
     let table = Table::new(
@@ -251,7 +276,7 @@ fn draw_station_list(
     .block(
         Block::default()
             .title(Span::styled(
-                page_title,
+                title,
                 Style::default().fg(NEON_CYAN).add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
@@ -279,6 +304,8 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         vec![
             key("↑↓", "Navigate"),
             key("Enter", "Play"),
+            key("Space", "Favorite"),
+            key("f", "Favorites"),
             key("/", "Filter"),
             key("n/p", "Next/Prev Page"),
             key("+/-", "Volume"),
@@ -305,7 +332,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
-    // Volume indicator
     spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
     spans.push(Span::styled(
         format!("Vol: {}%", app.volume_display()),
@@ -317,7 +343,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::NONE));
     frame.render_widget(footer, area);
 
-    // Render error/status overlay if needed
     if let Some(err) = &app.error {
         let popup_area = centered_rect(60, 20, frame.area());
         frame.render_widget(Clear, popup_area);

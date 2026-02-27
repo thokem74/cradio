@@ -36,6 +36,8 @@ The binary will be at `target/release/cradio`.
 | `↑` / `↓` | Navigate station list |
 | `Enter` | Play selected station |
 | `/` | Open filter mode |
+| `Space` | Add/remove selected station from favorites |
+| `f` | Toggle favorites view in station pane |
 | `Tab` | Switch to next filter field (in filter mode) |
 | `Esc` | Exit filter mode |
 | `s` | Stop playback |
@@ -53,6 +55,8 @@ The binary will be at `target/release/cradio`.
 - **Language (ISO)** — ISO 639 language code (e.g. `en`, `de`)
 
 Press `Enter` in filter mode to apply the search and return to the station list.
+
+Favorites are persisted in `$HOME/.cradio/favorites.json` as a JSON array of objects: `[{"stationuuid":"...","name":"...","url":"..."}]`.
 
 ## License
 
