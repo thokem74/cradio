@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use serde::Deserialize;
+use tokio::{sync::Semaphore, task::JoinSet};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Station {
@@ -41,7 +44,6 @@ impl Default for SearchParams {
 }
 
 fn resolve_api_server() -> String {
-    // Try to resolve a working radio-browser.info server
     let fallback = "all.api.radio-browser.info".to_string();
     match dns_lookup::lookup_host("all.api.radio-browser.info") {
         Ok(addrs) if !addrs.is_empty() => fallback,
@@ -89,10 +91,82 @@ pub async fn search_stations(
         return Err(format!("API error: {}", response.status()));
     }
 
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))
+}
+
+async fn fetch_station_by_uuid(
+    client: &reqwest::Client,
+    server: &str,
+    station_uuid: &str,
+) -> Result<Option<Station>, String> {
+    let url = format!("https://{}/json/stations/byuuid/{}", server, station_uuid);
+    let response = client
+        .get(&url)
+        .header("User-Agent", "cradio/0.1")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed for {}: {}", station_uuid, e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "API error for {}: {}",
+            station_uuid,
+            response.status()
+        ));
+    }
+
     let stations: Vec<Station> = response
         .json()
         .await
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error for {}: {}", station_uuid, e))?;
 
-    Ok(stations)
+    Ok(stations.into_iter().next())
+}
+
+pub async fn fetch_stations_by_uuids(
+    client: &reqwest::Client,
+    station_uuids: Vec<String>,
+) -> (Vec<Station>, Vec<String>) {
+    if station_uuids.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let server = resolve_api_server();
+    let semaphore = Arc::new(Semaphore::new(8));
+    let mut join_set = JoinSet::new();
+
+    for station_uuid in station_uuids {
+        let client = client.clone();
+        let server = server.clone();
+        let semaphore = Arc::clone(&semaphore);
+        join_set.spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("Concurrency control error: {}", e))?;
+            let result = fetch_station_by_uuid(&client, &server, &station_uuid).await;
+            Ok::<(String, Result<Option<Station>, String>), String>((station_uuid, result))
+        });
+    }
+
+    let mut stations = Vec::new();
+    let mut failed_uuids = Vec::new();
+
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok((station_uuid, Ok(Some(station))))) => {
+                stations.push(station);
+                let _ = station_uuid;
+            }
+            Ok(Ok((station_uuid, Ok(None)))) => failed_uuids.push(station_uuid),
+            Ok(Ok((station_uuid, Err(_)))) => failed_uuids.push(station_uuid),
+            Ok(Err(_)) => {}
+            Err(_) => {}
+        }
+    }
+
+    (stations, failed_uuids)
 }
