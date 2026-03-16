@@ -111,9 +111,9 @@ fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
 
     let fields = [
         ("Name", &app.draft_name, InputField::Name),
+        ("Country", &app.draft_country, InputField::Country),
+        ("Language", &app.draft_language, InputField::Language),
         ("Tags", &app.draft_tags, InputField::Tags),
-        ("Country (ISO)", &app.draft_country, InputField::Country),
-        ("Language (ISO)", &app.draft_language, InputField::Language),
     ];
 
     for (i, (label, value, field)) in fields.iter().enumerate() {

@@ -245,10 +245,10 @@ impl App {
 
     pub fn next_field(&mut self) {
         self.mode = match &self.mode {
-            AppMode::Filtering(InputField::Name) => AppMode::Filtering(InputField::Tags),
-            AppMode::Filtering(InputField::Tags) => AppMode::Filtering(InputField::Country),
+            AppMode::Filtering(InputField::Name) => AppMode::Filtering(InputField::Country),
             AppMode::Filtering(InputField::Country) => AppMode::Filtering(InputField::Language),
-            AppMode::Filtering(InputField::Language) => AppMode::Filtering(InputField::Name),
+            AppMode::Filtering(InputField::Language) => AppMode::Filtering(InputField::Tags),
+            AppMode::Filtering(InputField::Tags) => AppMode::Filtering(InputField::Name),
             AppMode::Normal => AppMode::Normal,
         };
     }
