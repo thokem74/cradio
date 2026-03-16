@@ -102,18 +102,20 @@ fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
     let filter_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(22),
+            Constraint::Percentage(14),
+            Constraint::Percentage(14),
+            Constraint::Percentage(36),
+            Constraint::Percentage(14),
         ])
         .split(area);
 
     let fields = [
         ("Name", &app.draft_name, InputField::Name),
         ("Country", &app.draft_country, InputField::Country),
-        ("Language", &app.draft_language, InputField::Language),
+        ("Lang", &app.draft_language, InputField::Language),
         ("Tags", &app.draft_tags, InputField::Tags),
+        ("Bitrate", &app.draft_bitrate, InputField::Bitrate),
     ];
 
     for (i, (label, value, field)) in fields.iter().enumerate() {
