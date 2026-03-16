@@ -20,9 +20,9 @@ pub fn draw(frame: &mut Frame, app: &App, table_state: &mut TableState) {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Length(5),
+            Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
         .split(size);
 
@@ -314,31 +314,51 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         ]
     };
 
-    let mut spans: Vec<Span> = Vec::new();
-    for (i, (k, desc)) in keys.iter().enumerate() {
+    let split_index = keys.len().div_ceil(2);
+    let (first_row, second_row) = keys.split_at(split_index);
+
+    let mut first_spans: Vec<Span> = Vec::new();
+    for (i, (k, desc)) in first_row.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  ", Style::default()));
+            first_spans.push(Span::styled("  ", Style::default()));
         }
-        spans.push(Span::styled(
+        first_spans.push(Span::styled(
             k.to_string(),
             Style::default()
                 .fg(Color::Black)
                 .bg(NEON_CYAN)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(
+        first_spans.push(Span::styled(
             format!(" {}", desc),
             Style::default().fg(Color::Gray),
         ));
     }
 
-    spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
-    spans.push(Span::styled(
+    let mut second_spans: Vec<Span> = Vec::new();
+    for (i, (k, desc)) in second_row.iter().enumerate() {
+        if i > 0 {
+            second_spans.push(Span::styled("  ", Style::default()));
+        }
+        second_spans.push(Span::styled(
+            k.to_string(),
+            Style::default()
+                .fg(Color::Black)
+                .bg(NEON_CYAN)
+                .add_modifier(Modifier::BOLD),
+        ));
+        second_spans.push(Span::styled(
+            format!(" {}", desc),
+            Style::default().fg(Color::Gray),
+        ));
+    }
+    second_spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
+    second_spans.push(Span::styled(
         format!("Vol: {}%", app.volume_display()),
         Style::default().fg(NEON_CYAN),
     ));
 
-    let footer = Paragraph::new(Line::from(spans))
+    let footer = Paragraph::new(vec![Line::from(first_spans), Line::from(second_spans)])
         .alignment(Alignment::Left)
         .block(Block::default().borders(Borders::NONE));
     frame.render_widget(footer, area);
