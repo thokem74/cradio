@@ -8,9 +8,10 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputField {
     Name,
-    Tags,
     Country,
     Language,
+    Bitrate,
+    Tags,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +48,7 @@ pub struct App {
     pub draft_tags: String,
     pub draft_country: String,
     pub draft_language: String,
+    pub draft_bitrate: String,
 }
 
 impl App {
@@ -73,6 +75,7 @@ impl App {
             draft_tags: String::new(),
             draft_country: String::new(),
             draft_language: String::new(),
+            draft_bitrate: String::new(),
         }
     }
 
@@ -86,6 +89,7 @@ impl App {
         self.params.tags = self.draft_tags.trim().to_string();
         self.params.country = self.draft_country.trim().to_uppercase();
         self.params.language = self.draft_language.trim().to_lowercase();
+        self.params.bitrate = self.draft_bitrate.trim().parse::<u32>().ok();
         self.page = 1;
         self.params.offset = 0;
     }
@@ -236,19 +240,21 @@ impl App {
     pub fn active_field_mut(&mut self) -> Option<&mut String> {
         match &self.mode {
             AppMode::Filtering(InputField::Name) => Some(&mut self.draft_name),
-            AppMode::Filtering(InputField::Tags) => Some(&mut self.draft_tags),
             AppMode::Filtering(InputField::Country) => Some(&mut self.draft_country),
             AppMode::Filtering(InputField::Language) => Some(&mut self.draft_language),
+            AppMode::Filtering(InputField::Bitrate) => Some(&mut self.draft_bitrate),
+            AppMode::Filtering(InputField::Tags) => Some(&mut self.draft_tags),
             AppMode::Normal => None,
         }
     }
 
     pub fn next_field(&mut self) {
         self.mode = match &self.mode {
-            AppMode::Filtering(InputField::Name) => AppMode::Filtering(InputField::Tags),
-            AppMode::Filtering(InputField::Tags) => AppMode::Filtering(InputField::Country),
+            AppMode::Filtering(InputField::Name) => AppMode::Filtering(InputField::Country),
             AppMode::Filtering(InputField::Country) => AppMode::Filtering(InputField::Language),
-            AppMode::Filtering(InputField::Language) => AppMode::Filtering(InputField::Name),
+            AppMode::Filtering(InputField::Language) => AppMode::Filtering(InputField::Tags),
+            AppMode::Filtering(InputField::Tags) => AppMode::Filtering(InputField::Bitrate),
+            AppMode::Filtering(InputField::Bitrate) => AppMode::Filtering(InputField::Name),
             AppMode::Normal => AppMode::Normal,
         };
     }

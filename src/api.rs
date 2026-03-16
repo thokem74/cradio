@@ -26,6 +26,7 @@ pub struct SearchParams {
     pub tags: String,
     pub country: String,
     pub language: String,
+    pub bitrate: Option<u32>,
     pub limit: u32,
     pub offset: u32,
 }
@@ -37,6 +38,7 @@ impl Default for SearchParams {
             tags: String::new(),
             country: String::new(),
             language: String::new(),
+            bitrate: None,
             limit: 50,
             offset: 0,
         }
@@ -78,6 +80,9 @@ pub async fn search_stations(
     if !params.language.is_empty() {
         query.push(("language", params.language.to_lowercase()));
     }
+    if let Some(bitrate) = params.bitrate {
+        query.push(("bitrateMin", bitrate.to_string()));
+    }
 
     let response = client
         .get(&url)
@@ -91,10 +96,16 @@ pub async fn search_stations(
         return Err(format!("API error: {}", response.status()));
     }
 
-    response
+    let mut stations: Vec<Station> = response
         .json()
         .await
-        .map_err(|e| format!("Parse error: {}", e))
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    if let Some(bitrate) = params.bitrate {
+        stations.retain(|station| station.bitrate >= bitrate);
+    }
+
+    Ok(stations)
 }
 
 async fn fetch_station_by_uuid(

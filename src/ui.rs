@@ -102,18 +102,20 @@ fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
     let filter_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(28),
+            Constraint::Percentage(14),
+            Constraint::Percentage(14),
+            Constraint::Percentage(30),
+            Constraint::Percentage(14),
         ])
         .split(area);
 
     let fields = [
         ("Name", &app.draft_name, InputField::Name),
+        ("Country", &app.draft_country, InputField::Country),
+        ("Lang", &app.draft_language, InputField::Language),
         ("Tags", &app.draft_tags, InputField::Tags),
-        ("Country (ISO)", &app.draft_country, InputField::Country),
-        ("Language (ISO)", &app.draft_language, InputField::Language),
+        ("Bitrate", &app.draft_bitrate, InputField::Bitrate),
     ];
 
     for (i, (label, value, field)) in fields.iter().enumerate() {
@@ -149,7 +151,7 @@ fn draw_filters(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState, area: Rect) {
-    let header_cells = ["Station Name", "Country", "Language", "Tags", "Bitrate"]
+    let header_cells = ["Name", "Country", "Language", "Tags", "Bitrate"]
         .iter()
         .map(|h| {
             Cell::from(*h).style(
