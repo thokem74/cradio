@@ -1,21 +1,43 @@
 # cradio
-Interactive command line tool to listen to internet radio stations for Linux.
+Interactive terminal app for listening to internet radio stations on Linux and Windows.
 
 ## Features
 
 - 🎵 Browse and search radio stations from [radio-browser.info](https://www.radio-browser.info/)
 - 🌍 Filter by station name, tags, country code (ISO 3166-1), and language (ISO 639)
-- 📻 Play streams using `cvlc` (VLC command-line player)
+- 📻 Play streams with VLC
 - 🎚️ Volume control
 - 📄 Pagination through thousands of stations
+- ★ Persist station favorites per user
+
+## Supported Platforms
+
+- Linux
+- Windows
 
 ## Prerequisites
 
-- Linux
 - [Rust](https://rustup.rs/) (1.70+)
-- `cvlc` (VLC media player CLI) — `sudo apt install vlc` or equivalent
+- VLC media player
+
+### Linux
+
+- Install VLC from your package manager, for example:
+
+```bash
+sudo apt install vlc
+```
+
+`cradio` will try `cvlc` first and then `vlc`.
+
+### Windows
+
+- Install VLC from [videolan.org](https://www.videolan.org/)
+- Make sure `vlc.exe` is on your `PATH`, or install it in the default `C:\Program Files\VideoLAN\VLC` location
 
 ## Build
+
+### Linux
 
 ```bash
 cargo build --release
@@ -23,13 +45,31 @@ cargo build --release
 
 The binary will be at `target/release/cradio`.
 
+### Windows
+
+In PowerShell:
+
+```powershell
+cargo build --release
+```
+
+The binary will be at `target\release\cradio.exe`.
+
 ## Usage
+
+### Linux
 
 ```bash
 ./target/release/cradio
 ```
 
-### Key Bindings
+### Windows
+
+```powershell
+.\target\release\cradio.exe
+```
+
+## Key Bindings
 
 | Key | Action |
 |-----|--------|
@@ -47,7 +87,7 @@ The binary will be at `target/release/cradio`.
 | `-` | Volume down |
 | `q` | Quit |
 
-### Filter Fields
+## Filter Fields
 
 - **Name** — partial station name (e.g. `Jazz FM`)
 - **Tags** — comma-separated tags (e.g. `jazz,blues`)
@@ -56,7 +96,18 @@ The binary will be at `target/release/cradio`.
 
 Press `Enter` in filter mode to apply the search and return to the station list.
 
-Favorites are persisted in `$HOME/.cradio/favorites.json` as a JSON array of objects: `[{"stationuuid":"...","name":"...","url":"..."}]`.
+## Favorites Storage
+
+Favorites are persisted as a JSON array of objects:
+
+```json
+[{"stationuuid":"...","name":"...","url":"..."}]
+```
+
+Default locations:
+
+- Linux: `$XDG_CONFIG_HOME/cradio/favorites.json` when `XDG_CONFIG_HOME` is set, otherwise `$HOME/.cradio/favorites.json`
+- Windows: `%APPDATA%\cradio\favorites.json`
 
 ## License
 

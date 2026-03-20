@@ -221,7 +221,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     KeyCode::Char(c) => {
-                        let bitrate_only = matches!(app.mode, AppMode::Filtering(InputField::Bitrate));
+                        let bitrate_only =
+                            matches!(app.mode, AppMode::Filtering(InputField::Bitrate));
                         if (!bitrate_only || c.is_ascii_digit())
                             && let Some(field) = app.active_field_mut()
                         {

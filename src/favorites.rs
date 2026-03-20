@@ -12,10 +12,85 @@ pub struct FavoriteEntry {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    Linux,
+    Windows,
+}
+
 fn favorites_path() -> Result<PathBuf, String> {
-    let home = env::var("HOME")
-        .map_err(|_| "HOME is not set; favorites persistence is unavailable".to_string())?;
-    Ok(Path::new(&home).join(".cradio").join("favorites.json"))
+    let env_vars: Vec<_> = env::vars_os().collect();
+    let platform = if cfg!(windows) {
+        Platform::Windows
+    } else {
+        Platform::Linux
+    };
+
+    favorites_path_for(platform, &env_vars)
+}
+
+fn favorites_path_for(
+    platform: Platform,
+    env_vars: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<PathBuf, String> {
+    match platform {
+        Platform::Linux => linux_favorites_dir(env_vars)
+            .map(|dir| dir.join("favorites.json"))
+            .ok_or_else(|| {
+                "Favorites persistence is unavailable: set XDG_CONFIG_HOME or HOME.".to_string()
+            }),
+        Platform::Windows => windows_favorites_dir(env_vars)
+            .map(|dir| windows_path(dir.as_os_str(), &["favorites.json"]))
+            .ok_or_else(|| {
+                "Favorites persistence is unavailable: set APPDATA, LOCALAPPDATA, or USERPROFILE."
+                    .to_string()
+            }),
+    }
+}
+
+fn linux_favorites_dir(env_vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> Option<PathBuf> {
+    env_lookup(env_vars, "XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("cradio"))
+        .or_else(|| {
+            env_lookup(env_vars, "HOME")
+                .map(PathBuf::from)
+                .map(|dir| dir.join(".cradio"))
+        })
+}
+
+fn windows_favorites_dir(env_vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> Option<PathBuf> {
+    env_lookup(env_vars, "APPDATA")
+        .map(|dir| windows_path(dir, &["cradio"]))
+        .or_else(|| env_lookup(env_vars, "LOCALAPPDATA").map(|dir| windows_path(dir, &["cradio"])))
+        .or_else(|| {
+            env_lookup(env_vars, "USERPROFILE")
+                .map(|dir| windows_path(dir, &["AppData", "Roaming", "cradio"]))
+        })
+}
+
+fn env_lookup<'a>(
+    env_vars: &'a [(std::ffi::OsString, std::ffi::OsString)],
+    key: &str,
+) -> Option<&'a std::ffi::OsStr> {
+    env_vars
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_os_str())
+}
+
+fn windows_path(base: &std::ffi::OsStr, segments: &[&str]) -> PathBuf {
+    let mut path = base
+        .to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_string();
+    for segment in segments {
+        if !path.is_empty() {
+            path.push('\\');
+        }
+        path.push_str(segment);
+    }
+    PathBuf::from(path)
 }
 
 fn load_favorites_from_path(path: &Path) -> Result<Vec<FavoriteEntry>, String> {
@@ -108,10 +183,14 @@ pub fn save_favorites(favorites: &[FavoriteEntry]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FavoriteEntry, load_favorites_from_path, save_favorites_to_path};
+    use super::{
+        FavoriteEntry, Platform, favorites_path_for, load_favorites_from_path,
+        save_favorites_to_path,
+    };
     use std::{
+        ffi::OsString,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -131,6 +210,40 @@ mod tests {
             name: name.to_string(),
             url: url.to_string(),
         }
+    }
+
+    #[test]
+    fn linux_path_prefers_xdg_config_home() {
+        let path = favorites_path_for(
+            Platform::Linux,
+            &[
+                (
+                    OsString::from("XDG_CONFIG_HOME"),
+                    OsString::from("/tmp/cradio-config"),
+                ),
+                (OsString::from("HOME"), OsString::from("/tmp/home")),
+            ],
+        )
+        .expect("path should resolve");
+
+        assert_eq!(path, Path::new("/tmp/cradio-config/cradio/favorites.json"));
+    }
+
+    #[test]
+    fn windows_path_uses_appdata() {
+        let path = favorites_path_for(
+            Platform::Windows,
+            &[(
+                OsString::from("APPDATA"),
+                OsString::from(r"C:\Users\Test\AppData\Roaming"),
+            )],
+        )
+        .expect("path should resolve");
+
+        assert_eq!(
+            path,
+            Path::new(r"C:\Users\Test\AppData\Roaming\cradio\favorites.json")
+        );
     }
 
     #[test]
