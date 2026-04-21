@@ -291,6 +291,7 @@ dependencies = [
 name = "cradio"
 version = "0.1.0"
 dependencies = [
+ "alsa-sys",
  "crossterm",
  "directories",
  "dns-lookup",

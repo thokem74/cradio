@@ -14,3 +14,6 @@ dns-lookup = "2"
 directories = "5"
 rodio = { version = "0.20", features = ["symphonia-all"] }
 stream-download = { version = "0.16", features = ["reqwest-rustls"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa-sys = "0.3.1"

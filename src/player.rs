@@ -1,4 +1,6 @@
 use rodio::{Decoder, OutputStream, Sink};
+#[cfg(target_os = "linux")]
+use std::sync::{Mutex, OnceLock};
 use stream_download::source::DecodeError;
 use stream_download::storage::temp::TempStorageProvider;
 use stream_download::{Settings, StreamDownload};
@@ -93,9 +95,53 @@ impl NativePlayer {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn suppress_alsa_errors() -> AlsaErrorSilencer {
+    static ALSA_HANDLER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let lock = ALSA_HANDLER_LOCK.get_or_init(|| Mutex::new(()));
+    let guard = lock.lock().expect("alsa handler lock poisoned");
+
+    unsafe extern "C" fn noop_alsa_error_handler(
+        _file: *const std::os::raw::c_char,
+        _line: std::os::raw::c_int,
+        _function: *const std::os::raw::c_char,
+        _err: std::os::raw::c_int,
+        _fmt: *const std::os::raw::c_char,
+        _arg: *mut alsa_sys::__va_list_tag,
+    ) {
+    }
+
+    // ALSA emits diagnostics directly to stderr, which would corrupt the TUI.
+    let previous_handler =
+        unsafe { alsa_sys::snd_lib_error_set_local(Some(noop_alsa_error_handler)) };
+
+    AlsaErrorSilencer {
+        _guard: guard,
+        previous_handler,
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct AlsaErrorSilencer {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    previous_handler: alsa_sys::snd_local_error_handler_t,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for AlsaErrorSilencer {
+    fn drop(&mut self) {
+        unsafe {
+            alsa_sys::snd_lib_error_set_local(self.previous_handler);
+        }
+    }
+}
+
 impl PlaybackBackend for NativePlayer {
     fn play(&mut self, url: &str) -> Option<String> {
         self.stop();
+
+        #[cfg(target_os = "linux")]
+        let _alsa_silencer = suppress_alsa_errors();
 
         let (stream, stream_handle) = match OutputStream::try_default() {
             Ok(stream) => stream,
