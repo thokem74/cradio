@@ -40,10 +40,12 @@ pub struct App {
     pub favorites_loading: bool,
     pub error: Option<String>,
     pub favorites_error: Option<String>,
+    pub playback_error: Option<String>,
     pub current_station: Option<Station>,
     pub volume: u8,
     pub favorite_ids: HashSet<String>,
     pub favorites: Vec<FavoriteEntry>,
+    pub latest_station_request_id: u64,
     pub draft_name: String,
     pub draft_tags: String,
     pub draft_country: String,
@@ -67,10 +69,12 @@ impl App {
             favorites_loading: false,
             error: None,
             favorites_error: None,
+            playback_error: None,
             current_station: None,
             volume: 50,
             favorite_ids: HashSet::new(),
             favorites: Vec::new(),
+            latest_station_request_id: 0,
             draft_name: String::new(),
             draft_tags: String::new(),
             draft_country: String::new(),
@@ -104,6 +108,15 @@ impl App {
         self.has_next_page = count == self.params.limit;
     }
 
+    pub fn note_station_request(&mut self) -> u64 {
+        self.latest_station_request_id += 1;
+        self.latest_station_request_id
+    }
+
+    pub fn is_latest_station_request(&self, request_id: u64) -> bool {
+        request_id == self.latest_station_request_id
+    }
+
     pub fn set_favorite_stations(&mut self, stations: Vec<Station>) {
         self.favorite_stations = stations;
         self.favorites_loading = false;
@@ -128,6 +141,10 @@ impl App {
             StationViewMode::AllStations => self.error.as_deref(),
             StationViewMode::Favorites => self.favorites_error.as_deref(),
         }
+    }
+
+    pub fn now_playing_error(&self) -> Option<&str> {
+        self.playback_error.as_deref()
     }
 
     pub fn current_station_list(&self) -> &[Station] {
@@ -434,5 +451,28 @@ mod tests {
         assert_eq!(app.page, 2);
         assert_eq!(app.params.offset, 50);
         assert!(app.loading);
+    }
+
+    #[test]
+    fn station_request_tracking_accepts_only_latest_request() {
+        let mut app = App::new();
+
+        let first = app.note_station_request();
+        let second = app.note_station_request();
+
+        assert!(!app.is_latest_station_request(first));
+        assert!(app.is_latest_station_request(second));
+    }
+
+    #[test]
+    fn playback_error_is_scoped_separately_from_active_view_errors() {
+        let mut app = App::new();
+        app.playback_error = Some("playback failed".to_string());
+        app.error = Some("search failed".to_string());
+        app.favorites_error = Some("favorites failed".to_string());
+        app.set_view_mode(StationViewMode::Favorites);
+
+        assert_eq!(app.now_playing_error(), Some("playback failed"));
+        assert_eq!(app.active_error(), Some("favorites failed"));
     }
 }
