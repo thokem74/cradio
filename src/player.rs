@@ -110,7 +110,13 @@ fn vlc_volume_command(volume: u8) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{vlc_volume_command, vlc_volume_from_percent};
+    use super::{Player, vlc_volume_command, vlc_volume_from_percent};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn vlc_volume_mapping_matches_expected_bounds() {
@@ -122,5 +128,29 @@ mod tests {
     #[test]
     fn vlc_volume_command_formats_rc_input() {
         assert_eq!(vlc_volume_command(25), "volume 64\n");
+    }
+
+    #[test]
+    fn play_returns_install_hint_when_cvlc_is_not_on_path() {
+        let _guard = env_lock().lock().expect("env lock");
+        let original_path = std::env::var_os("PATH");
+
+        unsafe {
+            std::env::set_var("PATH", "");
+        }
+
+        let mut player = Player::new();
+        let result = player.play("https://example.com/stream");
+
+        match original_path {
+            Some(path) => unsafe { std::env::set_var("PATH", path) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        assert_eq!(
+            result,
+            Some("cvlc not found. Please install VLC: sudo apt install vlc".to_string())
+        );
+        assert!(!player.is_playing());
     }
 }

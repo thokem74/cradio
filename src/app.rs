@@ -393,4 +393,46 @@ mod tests {
         app.has_next_page = false;
         assert_eq!(app.stations_title(), " Stations - Page 3 - end reached ");
     }
+
+    #[test]
+    fn next_page_only_advances_when_next_page_is_available() {
+        let mut app = App::new();
+        app.page = 2;
+        app.params.limit = 50;
+        app.params.offset = 50;
+        app.has_next_page = false;
+
+        assert!(!app.next_page());
+        assert_eq!(app.page, 2);
+        assert_eq!(app.params.offset, 50);
+        assert!(!app.loading);
+
+        app.has_next_page = true;
+
+        assert!(app.next_page());
+        assert_eq!(app.page, 3);
+        assert_eq!(app.params.offset, 100);
+        assert!(app.loading);
+    }
+
+    #[test]
+    fn prev_page_only_moves_back_from_page_after_first() {
+        let mut app = App::new();
+        app.page = 1;
+        app.params.limit = 50;
+        app.params.offset = 0;
+
+        assert!(!app.prev_page());
+        assert_eq!(app.page, 1);
+        assert_eq!(app.params.offset, 0);
+        assert!(!app.loading);
+
+        app.page = 3;
+        app.params.offset = 100;
+
+        assert!(app.prev_page());
+        assert_eq!(app.page, 2);
+        assert_eq!(app.params.offset, 50);
+        assert!(app.loading);
+    }
 }
