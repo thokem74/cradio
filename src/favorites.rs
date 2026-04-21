@@ -1,8 +1,9 @@
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,9 +14,9 @@ pub struct FavoriteEntry {
 }
 
 fn favorites_path() -> Result<PathBuf, String> {
-    let home = env::var("HOME")
-        .map_err(|_| "HOME is not set; favorites persistence is unavailable".to_string())?;
-    Ok(Path::new(&home).join(".cradio").join("favorites.json"))
+    let dirs = ProjectDirs::from("", "", "cradio")
+        .ok_or_else(|| "Unable to determine a config directory for this platform".to_string())?;
+    Ok(dirs.config_dir().join("favorites.json"))
 }
 
 fn load_favorites_from_path(path: &Path) -> Result<Vec<FavoriteEntry>, String> {
@@ -109,6 +110,7 @@ pub fn save_favorites(favorites: &[FavoriteEntry]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{FavoriteEntry, load_favorites_from_path, save_favorites_to_path};
+    use directories::ProjectDirs;
     use std::{
         fs,
         path::PathBuf,
@@ -191,5 +193,23 @@ mod tests {
         assert_eq!(updated.url, "https://new");
 
         let _ = fs::remove_dir_all(path.parent().expect("parent").parent().expect("root"));
+    }
+
+    #[test]
+    fn save_creates_parent_directories() {
+        let path = temp_path("mkdirs");
+        let favorites = vec![fav("uuid-a", "Alpha", "https://a")];
+
+        save_favorites_to_path(&path, &favorites).expect("save should create parent directories");
+
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(path.parent().expect("parent").parent().expect("root"));
+    }
+
+    #[test]
+    fn project_dirs_resolve_native_config_path() {
+        let dirs = ProjectDirs::from("", "", "cradio").expect("project dirs");
+        let expected = dirs.config_dir().join("favorites.json");
+        assert!(expected.ends_with("favorites.json"));
     }
 }
