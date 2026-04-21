@@ -24,8 +24,14 @@ use player::Player;
 
 #[derive(Debug)]
 enum AppEvent {
-    StationsLoaded(Vec<api::Station>),
-    LoadError(String),
+    StationsLoaded {
+        request_id: u64,
+        stations: Vec<api::Station>,
+    },
+    LoadError {
+        request_id: u64,
+        err: String,
+    },
     FavoritesLoaded(Vec<api::Station>, Vec<String>),
 }
 
@@ -68,7 +74,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let http_client = reqwest::Client::new();
 
     app.loading = true;
-    trigger_load(&tx, &http_client, &app);
+    trigger_load(&tx, &http_client, &mut app);
 
     let tick_rate = Duration::from_millis(200);
     let mut last_tick = Instant::now();
@@ -76,11 +82,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     loop {
         while let Ok(event) = rx.try_recv() {
             match event {
-                AppEvent::StationsLoaded(stations) => {
-                    app.set_stations(stations);
+                AppEvent::StationsLoaded {
+                    request_id,
+                    stations,
+                } => {
+                    if app.is_latest_station_request(request_id) {
+                        app.set_stations(stations);
+                    }
                 }
-                AppEvent::LoadError(err) => {
-                    app.set_error(err);
+                AppEvent::LoadError { request_id, err } => {
+                    if app.is_latest_station_request(request_id) {
+                        app.set_error(err);
+                    }
                 }
                 AppEvent::FavoritesLoaded(mut stations, failed_uuids) => {
                     let mut seen: HashSet<String> =
@@ -137,16 +150,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 station.url.clone()
                             };
                             if let Some(err) = player.play(&url) {
-                                app.error = Some(err);
+                                app.current_station = None;
+                                app.playback_error = Some(err);
                             } else {
                                 app.current_station = Some(station);
-                                app.error = None;
+                                app.playback_error = None;
                             }
                         }
                     }
                     KeyCode::Char('s') => {
                         player.stop();
                         app.current_station = None;
+                        app.playback_error = None;
                     }
                     KeyCode::Char('/') => {
                         app.mode = AppMode::Filtering(InputField::Name);
@@ -181,14 +196,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     KeyCode::Char('n') => {
                         if !app.loading && app.view_mode == StationViewMode::AllStations {
-                            app.next_page();
-                            trigger_load(&tx, &http_client, &app);
+                            if app.next_page() {
+                                trigger_load(&tx, &http_client, &mut app);
+                            }
                         }
                     }
                     KeyCode::Char('p') => {
                         if !app.loading && app.view_mode == StationViewMode::AllStations {
-                            app.prev_page();
-                            trigger_load(&tx, &http_client, &app);
+                            if app.prev_page() {
+                                trigger_load(&tx, &http_client, &mut app);
+                            }
                         }
                     }
                     KeyCode::Char('+') => {
@@ -213,7 +230,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.mode = AppMode::Normal;
                         app.loading = true;
                         app.set_view_mode(StationViewMode::AllStations);
-                        trigger_load(&tx, &http_client, &app);
+                        trigger_load(&tx, &http_client, &mut app);
                     }
                     KeyCode::Backspace => {
                         if let Some(field) = app.active_field_mut() {
@@ -221,7 +238,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     KeyCode::Char(c) => {
-                        let bitrate_only = matches!(app.mode, AppMode::Filtering(InputField::Bitrate));
+                        let bitrate_only =
+                            matches!(app.mode, AppMode::Filtering(InputField::Bitrate));
                         if (!bitrate_only || c.is_ascii_digit())
                             && let Some(field) = app.active_field_mut()
                         {
@@ -263,17 +281,21 @@ fn fallback_stations_from_cached(
         .collect()
 }
 
-fn trigger_load(tx: &mpsc::UnboundedSender<AppEvent>, client: &reqwest::Client, app: &App) {
+fn trigger_load(tx: &mpsc::UnboundedSender<AppEvent>, client: &reqwest::Client, app: &mut App) {
     let tx = tx.clone();
     let client = client.clone();
     let params = app.params.clone();
+    let request_id = app.note_station_request();
     tokio::spawn(async move {
         match api::search_stations(&client, &params).await {
             Ok(stations) => {
-                let _ = tx.send(AppEvent::StationsLoaded(stations));
+                let _ = tx.send(AppEvent::StationsLoaded {
+                    request_id,
+                    stations,
+                });
             }
             Err(e) => {
-                let _ = tx.send(AppEvent::LoadError(e));
+                let _ = tx.send(AppEvent::LoadError { request_id, err: e });
             }
         }
     });
@@ -290,4 +312,71 @@ fn trigger_load_favorites(
         let (stations, failed_uuids) = api::fetch_stations_by_uuids(&client, uuids).await;
         let _ = tx.send(AppEvent::FavoritesLoaded(stations, failed_uuids));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppEvent;
+    use crate::{
+        api::{SearchParams, Station},
+        app::App,
+    };
+
+    fn station(uuid: &str, name: &str) -> Station {
+        Station {
+            stationuuid: uuid.to_string(),
+            name: name.to_string(),
+            url: format!("https://{}", uuid),
+            url_resolved: String::new(),
+            tags: String::new(),
+            country_code: String::new(),
+            language: String::new(),
+            bitrate: 0,
+        }
+    }
+
+    fn apply_station_event(app: &mut App, event: AppEvent) {
+        match event {
+            AppEvent::StationsLoaded {
+                request_id,
+                stations,
+            } => {
+                if app.is_latest_station_request(request_id) {
+                    app.set_stations(stations);
+                }
+            }
+            AppEvent::LoadError { request_id, err } => {
+                if app.is_latest_station_request(request_id) {
+                    app.set_error(err);
+                }
+            }
+            AppEvent::FavoritesLoaded(_, _) => {}
+        }
+    }
+
+    #[test]
+    fn stale_station_loads_are_ignored() {
+        let mut app = App::new();
+        app.params = SearchParams::default();
+        let first = app.note_station_request();
+        let second = app.note_station_request();
+
+        apply_station_event(
+            &mut app,
+            AppEvent::StationsLoaded {
+                request_id: second,
+                stations: vec![station("new", "New")],
+            },
+        );
+        apply_station_event(
+            &mut app,
+            AppEvent::StationsLoaded {
+                request_id: first,
+                stations: vec![station("old", "Old")],
+            },
+        );
+
+        assert_eq!(app.stations.len(), 1);
+        assert_eq!(app.stations[0].stationuuid, "new");
+    }
 }

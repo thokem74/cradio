@@ -111,18 +111,30 @@ mod tests {
     use super::{FavoriteEntry, load_favorites_from_path, save_favorites_to_path};
     use std::{
         fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
     };
 
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "cradio-favorites-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            id
+        ))
+    }
+
     fn temp_path(name: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        std::env::temp_dir()
-            .join(format!("cradio-favorites-test-{}-{}", name, stamp))
-            .join("favorites.json")
+        temp_dir(name).join("favorites.json")
+    }
+
+    fn cleanup(path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 
     fn fav(id: &str, name: &str, url: &str) -> FavoriteEntry {
@@ -149,7 +161,7 @@ mod tests {
         let err = load_favorites_from_path(&path).expect_err("expected parse error");
         assert!(err.contains("Failed to parse favorites JSON"));
 
-        let _ = fs::remove_dir_all(path.parent().expect("parent").parent().expect("root"));
+        cleanup(&path);
     }
 
     #[test]
@@ -167,7 +179,7 @@ mod tests {
         assert_eq!(loaded[0].stationuuid, "uuid-a");
         assert_eq!(loaded[1].stationuuid, "uuid-b");
 
-        let _ = fs::remove_dir_all(path.parent().expect("parent").parent().expect("root"));
+        cleanup(&path);
     }
 
     #[test]
@@ -190,6 +202,6 @@ mod tests {
         assert_eq!(updated.name, "New Name");
         assert_eq!(updated.url, "https://new");
 
-        let _ = fs::remove_dir_all(path.parent().expect("parent").parent().expect("root"));
+        cleanup(&path);
     }
 }

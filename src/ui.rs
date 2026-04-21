@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
 use crate::app::{App, AppMode, InputField, StationViewMode};
@@ -57,13 +57,19 @@ fn draw_header(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
-    let content = if let Some(station) = &app.current_station {
-        let tags = truncate(&station.tags, 30);
-        let country = if station.country_code.is_empty() {
-            "N/A".to_string()
-        } else {
-            station.country_code.clone()
-        };
+    let content = if let Some(err) = app.now_playing_error() {
+        Line::from(vec![
+            Span::styled(
+                "Playback failed: ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(err, Style::default().fg(Color::White)),
+        ])
+    } else if let Some(station) = &app.current_station {
+        let country = display_country(station);
+        let language = display_language(station);
+        let tags = display_tags(station, 24);
+        let bitrate = display_bitrate(station);
         Line::from(vec![
             Span::styled(
                 "▶ ",
@@ -77,10 +83,14 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
             Span::styled(country, Style::default().fg(NEON_CYAN)),
-            Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled(language, Style::default().fg(Color::White)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
             Span::styled(tags, Style::default().fg(NEON_MAGENTA)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled(bitrate, Style::default().fg(NEON_CYAN)),
         ])
     } else {
         Line::from(vec![Span::styled(
@@ -93,7 +103,11 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .title(" Now Playing ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green)),
+            .border_style(Style::default().fg(if app.now_playing_error().is_some() {
+                Color::Red
+            } else {
+                Color::Green
+            })),
     );
     frame.render_widget(player_widget, area);
 }
@@ -174,11 +188,7 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
             "Loading stations...",
             Style::default().fg(Color::Yellow),
         ))])]
-    } else if let Some(err) = if app.view_mode == StationViewMode::Favorites {
-        app.favorites_error.as_ref()
-    } else {
-        app.error.as_ref()
-    } {
+    } else if let Some(err) = app.active_error() {
         vec![Row::new(vec![Cell::from(Span::styled(
             format!("Error: {}", err),
             Style::default().fg(Color::Red),
@@ -213,22 +223,10 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
                     favorite_prefix,
                     truncate(&s.name, 32)
                 );
-                let country = if s.country_code.is_empty() {
-                    "N/A".to_string()
-                } else {
-                    s.country_code.clone()
-                };
-                let language = if s.language.is_empty() {
-                    "N/A".to_string()
-                } else {
-                    truncate(&s.language, 12)
-                };
-                let tags = truncate(&s.tags, 30);
-                let bitrate = if s.bitrate > 0 {
-                    format!("{} kbps", s.bitrate)
-                } else {
-                    String::from("N/A")
-                };
+                let country = display_country(s);
+                let language = display_language(s);
+                let tags = display_tags(s, 30);
+                let bitrate = display_bitrate(s);
 
                 let style = if i == app.selected {
                     Style::default()
@@ -253,16 +251,7 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
             .collect()
     };
 
-    let title = match app.view_mode {
-        StationViewMode::AllStations => {
-            if app.total_pages > 0 {
-                format!(" Stations — Page {}/{} ", app.page, app.total_pages)
-            } else {
-                " Stations ".to_string()
-            }
-        }
-        StationViewMode::Favorites => " Favorites ".to_string(),
-    };
+    let title = app.stations_title();
 
     let table = Table::new(
         rows,
@@ -291,7 +280,9 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
             .add_modifier(Modifier::BOLD),
     );
 
-    *table_state = TableState::default().with_selected(Some(app.selected));
+    *table_state = TableState::default()
+        .with_offset(app.scroll_offset)
+        .with_selected(Some(app.selected));
     frame.render_stateful_widget(table, area, table_state);
 }
 
@@ -364,20 +355,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .alignment(Alignment::Left)
         .block(Block::default().borders(Borders::NONE));
     frame.render_widget(footer, area);
-
-    if let Some(err) = &app.error {
-        let popup_area = centered_rect(60, 20, frame.area());
-        frame.render_widget(Clear, popup_area);
-        let popup = Paragraph::new(err.as_str())
-            .style(Style::default().fg(Color::Red))
-            .block(
-                Block::default()
-                    .title(" Error ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Red)),
-            );
-        frame.render_widget(popup, popup_area);
-    }
 }
 
 fn key<'a>(k: &'a str, desc: &'a str) -> (&'a str, &'a str) {
@@ -394,22 +371,152 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
+fn display_country(station: &crate::api::Station) -> String {
+    if station.country_code.is_empty() {
+        "N/A".to_string()
+    } else {
+        station.country_code.clone()
+    }
+}
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+fn display_language(station: &crate::api::Station) -> String {
+    if station.language.is_empty() {
+        "N/A".to_string()
+    } else {
+        truncate(&station.language, 12)
+    }
+}
+
+fn display_tags(station: &crate::api::Station, max: usize) -> String {
+    truncate(&station.tags, max)
+}
+
+fn display_bitrate(station: &crate::api::Station) -> String {
+    if station.bitrate > 0 {
+        format!("{} kbps", station.bitrate)
+    } else {
+        String::from("N/A")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draw;
+    use crate::{api::Station, app::App};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, widgets::TableState};
+
+    fn station(id: &str) -> Station {
+        Station {
+            stationuuid: id.to_string(),
+            name: format!("Station {}", id),
+            url: format!("https://{}", id),
+            url_resolved: String::new(),
+            tags: String::new(),
+            country_code: String::new(),
+            language: String::new(),
+            bitrate: 0,
+        }
+    }
+
+    fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
+        let area = buffer.area();
+        let mut text = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text.contains(needle)
+    }
+
+    #[test]
+    fn draw_renders_inline_playback_error() {
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.playback_error = Some("cvlc not found".to_string());
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Playback failed:"));
+        assert!(buffer_contains(&buffer, "cvlc not found"));
+    }
+
+    #[test]
+    fn draw_now_playing_shows_all_station_metadata_inline() {
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.current_station = Some(Station {
+            stationuuid: "id-1".to_string(),
+            name: "Classic Vinyl HD".to_string(),
+            url: "https://example.com".to_string(),
+            url_resolved: String::new(),
+            tags: "1930,1940,1950,1960,beautiful".to_string(),
+            country_code: "US".to_string(),
+            language: "english".to_string(),
+            bitrate: 320,
+        });
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Classic Vinyl HD"));
+        assert!(buffer_contains(&buffer, "US"));
+        assert!(buffer_contains(&buffer, "english"));
+        assert!(buffer_contains(&buffer, "1930,1940,1950"));
+        assert!(buffer_contains(&buffer, "320 kbps"));
+    }
+
+    #[test]
+    fn draw_now_playing_uses_na_for_missing_metadata() {
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.current_station = Some(Station {
+            stationuuid: "id-2".to_string(),
+            name: "Unknown Station".to_string(),
+            url: "https://example.com".to_string(),
+            url_resolved: String::new(),
+            tags: String::new(),
+            country_code: String::new(),
+            language: String::new(),
+            bitrate: 0,
+        });
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Unknown Station"));
+        assert!(buffer_contains(&buffer, "N/A"));
+    }
+
+    #[test]
+    fn draw_uses_app_scroll_offset_for_table_state() {
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.stations = (0..12).map(|i| station(&i.to_string())).collect();
+        app.selected = 8;
+        app.scroll_offset = 4;
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        assert_eq!(table_state.selected(), Some(8));
+        assert_eq!(table_state.offset(), 4);
+    }
 }
