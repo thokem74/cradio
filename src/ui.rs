@@ -61,19 +61,15 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(
                 "Playback failed: ",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::styled(err, Style::default().fg(Color::White)),
         ])
     } else if let Some(station) = &app.current_station {
-        let tags = truncate(&station.tags, 30);
-        let country = if station.country_code.is_empty() {
-            "N/A".to_string()
-        } else {
-            station.country_code.clone()
-        };
+        let country = display_country(station);
+        let language = display_language(station);
+        let tags = display_tags(station, 24);
+        let bitrate = display_bitrate(station);
         Line::from(vec![
             Span::styled(
                 "▶ ",
@@ -87,10 +83,14 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
             Span::styled(country, Style::default().fg(NEON_CYAN)),
-            Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled(language, Style::default().fg(Color::White)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
             Span::styled(tags, Style::default().fg(NEON_MAGENTA)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled(bitrate, Style::default().fg(NEON_CYAN)),
         ])
     } else {
         Line::from(vec![Span::styled(
@@ -223,22 +223,10 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
                     favorite_prefix,
                     truncate(&s.name, 32)
                 );
-                let country = if s.country_code.is_empty() {
-                    "N/A".to_string()
-                } else {
-                    s.country_code.clone()
-                };
-                let language = if s.language.is_empty() {
-                    "N/A".to_string()
-                } else {
-                    truncate(&s.language, 12)
-                };
-                let tags = truncate(&s.tags, 30);
-                let bitrate = if s.bitrate > 0 {
-                    format!("{} kbps", s.bitrate)
-                } else {
-                    String::from("N/A")
-                };
+                let country = display_country(s);
+                let language = display_language(s);
+                let tags = display_tags(s, 30);
+                let bitrate = display_bitrate(s);
 
                 let style = if i == app.selected {
                     Style::default()
@@ -383,6 +371,34 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+fn display_country(station: &crate::api::Station) -> String {
+    if station.country_code.is_empty() {
+        "N/A".to_string()
+    } else {
+        station.country_code.clone()
+    }
+}
+
+fn display_language(station: &crate::api::Station) -> String {
+    if station.language.is_empty() {
+        "N/A".to_string()
+    } else {
+        truncate(&station.language, 12)
+    }
+}
+
+fn display_tags(station: &crate::api::Station, max: usize) -> String {
+    truncate(&station.tags, max)
+}
+
+fn display_bitrate(station: &crate::api::Station) -> String {
+    if station.bitrate > 0 {
+        format!("{} kbps", station.bitrate)
+    } else {
+        String::from("N/A")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::draw;
@@ -429,6 +445,61 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         assert!(buffer_contains(&buffer, "Playback failed:"));
         assert!(buffer_contains(&buffer, "cvlc not found"));
+    }
+
+    #[test]
+    fn draw_now_playing_shows_all_station_metadata_inline() {
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.current_station = Some(Station {
+            stationuuid: "id-1".to_string(),
+            name: "Classic Vinyl HD".to_string(),
+            url: "https://example.com".to_string(),
+            url_resolved: String::new(),
+            tags: "1930,1940,1950,1960,beautiful".to_string(),
+            country_code: "US".to_string(),
+            language: "english".to_string(),
+            bitrate: 320,
+        });
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Classic Vinyl HD"));
+        assert!(buffer_contains(&buffer, "US"));
+        assert!(buffer_contains(&buffer, "english"));
+        assert!(buffer_contains(&buffer, "1930,1940,1950"));
+        assert!(buffer_contains(&buffer, "320 kbps"));
+    }
+
+    #[test]
+    fn draw_now_playing_uses_na_for_missing_metadata() {
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let mut table_state = TableState::default();
+        app.current_station = Some(Station {
+            stationuuid: "id-2".to_string(),
+            name: "Unknown Station".to_string(),
+            url: "https://example.com".to_string(),
+            url_resolved: String::new(),
+            tags: String::new(),
+            country_code: String::new(),
+            language: String::new(),
+            bitrate: 0,
+        });
+
+        terminal
+            .draw(|frame| draw(frame, &app, &mut table_state))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer().clone();
+        assert!(buffer_contains(&buffer, "Unknown Station"));
+        assert!(buffer_contains(&buffer, "N/A"));
     }
 
     #[test]
