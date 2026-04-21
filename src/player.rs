@@ -60,11 +60,6 @@ impl Player {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn is_playing(&self) -> bool {
-        self.process.is_some()
-    }
-
     pub fn volume_up(&mut self) {
         if self.volume < 100 {
             self.volume = (self.volume + 5).min(100);
@@ -151,6 +146,5 @@ mod tests {
             result,
             Some("cvlc not found. Please install VLC: sudo apt install vlc".to_string())
         );
-        assert!(!player.is_playing());
     }
 }
