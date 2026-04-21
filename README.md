@@ -15,6 +15,14 @@ Interactive command line tool to listen to internet radio stations for Linux.
 - [Rust](https://rustup.rs/) (1.70+)
 - `cvlc` (VLC media player CLI) — `sudo apt install vlc` or equivalent
 
+## Verify
+
+```bash
+cargo test
+cargo cehck
+cargo fmr --check
+```
+
 ## Build
 
 ```bash
