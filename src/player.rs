@@ -18,7 +18,7 @@ impl Player {
 
     pub fn play(&mut self, url: &str) -> Option<String> {
         self.stop();
-        let vol_arg = format!("{}", self.vlc_volume());
+        let vol_arg = vlc_volume_from_percent(self.volume).to_string();
         let mut cmd = Command::new("cvlc");
         cmd.args([
             "--no-video",
@@ -68,14 +68,14 @@ impl Player {
     pub fn volume_up(&mut self) {
         if self.volume < 100 {
             self.volume = (self.volume + 5).min(100);
-            let _ = self.send_vlc_command(&format!("volume {}\n", self.vlc_volume()));
+            let _ = self.send_vlc_command(&vlc_volume_command(self.volume));
         }
     }
 
     pub fn volume_down(&mut self) {
         if self.volume > 0 {
             self.volume = self.volume.saturating_sub(5);
-            let _ = self.send_vlc_command(&format!("volume {}\n", self.vlc_volume()));
+            let _ = self.send_vlc_command(&vlc_volume_command(self.volume));
         }
     }
 
@@ -91,15 +91,36 @@ impl Player {
             ))
         }
     }
-
-    fn vlc_volume(&self) -> u32 {
-        // VLC volume: 0-256 maps from our 0-100
-        (self.volume as u32 * 256) / 100
-    }
 }
 
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn vlc_volume_from_percent(volume: u8) -> u32 {
+    // VLC volume: 0-256 maps from our 0-100
+    (volume as u32 * 256) / 100
+}
+
+fn vlc_volume_command(volume: u8) -> String {
+    format!("volume {}\n", vlc_volume_from_percent(volume))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{vlc_volume_command, vlc_volume_from_percent};
+
+    #[test]
+    fn vlc_volume_mapping_matches_expected_bounds() {
+        assert_eq!(vlc_volume_from_percent(0), 0);
+        assert_eq!(vlc_volume_from_percent(50), 128);
+        assert_eq!(vlc_volume_from_percent(100), 256);
+    }
+
+    #[test]
+    fn vlc_volume_command_formats_rc_input() {
+        assert_eq!(vlc_volume_command(25), "volume 64\n");
     }
 }

@@ -19,8 +19,8 @@ Interactive command line tool to listen to internet radio stations for Linux.
 
 ```bash
 cargo test
-cargo cehck
-cargo fmr --check
+cargo check
+cargo fmt --check
 ```
 
 ## Build

@@ -3,6 +3,8 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tokio::{sync::Semaphore, task::JoinSet};
 
+const API_SERVER: &str = "all.api.radio-browser.info";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Station {
     pub stationuuid: String,
@@ -45,22 +47,8 @@ impl Default for SearchParams {
     }
 }
 
-fn resolve_api_server() -> String {
-    let fallback = "all.api.radio-browser.info".to_string();
-    match dns_lookup::lookup_host("all.api.radio-browser.info") {
-        Ok(addrs) if !addrs.is_empty() => fallback,
-        _ => fallback,
-    }
-}
-
-pub async fn search_stations(
-    client: &reqwest::Client,
-    params: &SearchParams,
-) -> Result<Vec<Station>, String> {
-    let server = resolve_api_server();
-    let url = format!("https://{}/json/stations/search", server);
-
-    let mut query: Vec<(&str, String)> = vec![
+fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
+    let mut query = vec![
         ("limit", params.limit.to_string()),
         ("offset", params.offset.to_string()),
         ("hidebroken", "true".to_string()),
@@ -68,21 +56,47 @@ pub async fn search_stations(
         ("reverse", "true".to_string()),
     ];
 
-    if !params.name.is_empty() {
-        query.push(("name", params.name.clone()));
+    let name = params.name.trim();
+    if !name.is_empty() {
+        query.push(("name", name.to_string()));
     }
-    if !params.tags.is_empty() {
-        query.push(("tagList", params.tags.clone()));
+
+    let tags = params.tags.trim();
+    if !tags.is_empty() {
+        query.push(("tagList", tags.to_string()));
     }
-    if !params.country.is_empty() {
-        query.push(("countrycode", params.country.to_uppercase()));
+
+    let country = params.country.trim();
+    if !country.is_empty() {
+        query.push(("countrycode", country.to_uppercase()));
     }
-    if !params.language.is_empty() {
-        query.push(("language", params.language.to_lowercase()));
+
+    let language = params.language.trim();
+    if !language.is_empty() {
+        query.push(("language", language.to_lowercase()));
     }
+
     if let Some(bitrate) = params.bitrate {
         query.push(("bitrateMin", bitrate.to_string()));
     }
+
+    query
+}
+
+fn filter_stations_by_bitrate(mut stations: Vec<Station>, bitrate: Option<u32>) -> Vec<Station> {
+    if let Some(bitrate) = bitrate {
+        stations.retain(|station| station.bitrate >= bitrate);
+    }
+
+    stations
+}
+
+pub async fn search_stations(
+    client: &reqwest::Client,
+    params: &SearchParams,
+) -> Result<Vec<Station>, String> {
+    let url = format!("https://{}/json/stations/search", API_SERVER);
+    let query = search_query(params);
 
     let response = client
         .get(&url)
@@ -96,16 +110,12 @@ pub async fn search_stations(
         return Err(format!("API error: {}", response.status()));
     }
 
-    let mut stations: Vec<Station> = response
+    let stations: Vec<Station> = response
         .json()
         .await
         .map_err(|e| format!("Parse error: {}", e))?;
 
-    if let Some(bitrate) = params.bitrate {
-        stations.retain(|station| station.bitrate >= bitrate);
-    }
-
-    Ok(stations)
+    Ok(filter_stations_by_bitrate(stations, params.bitrate))
 }
 
 async fn fetch_station_by_uuid(
@@ -145,7 +155,7 @@ pub async fn fetch_stations_by_uuids(
         return (Vec::new(), Vec::new());
     }
 
-    let server = resolve_api_server();
+    let server = API_SERVER.to_string();
     let semaphore = Arc::new(Semaphore::new(8));
     let mut join_set = JoinSet::new();
 
@@ -180,4 +190,95 @@ pub async fn fetch_stations_by_uuids(
     }
 
     (stations, failed_uuids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SearchParams, Station, filter_stations_by_bitrate, search_query};
+
+    fn station(id: &str, bitrate: u32) -> Station {
+        Station {
+            stationuuid: id.to_string(),
+            name: format!("Station {}", id),
+            url: format!("https://{}", id),
+            url_resolved: String::new(),
+            tags: String::new(),
+            country_code: String::new(),
+            language: String::new(),
+            bitrate,
+        }
+    }
+
+    #[test]
+    fn search_query_contains_defaults_for_empty_filters() {
+        let params = SearchParams::default();
+        let query = search_query(&params);
+
+        assert_eq!(
+            query,
+            vec![
+                ("limit", "50".to_string()),
+                ("offset", "0".to_string()),
+                ("hidebroken", "true".to_string()),
+                ("order", "clickcount".to_string()),
+                ("reverse", "true".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_query_normalizes_filter_values() {
+        let params = SearchParams {
+            name: " Jazz FM ".to_string(),
+            tags: " jazz,blues ".to_string(),
+            country: "de".to_string(),
+            language: "EN".to_string(),
+            bitrate: Some(128),
+            limit: 25,
+            offset: 50,
+        };
+
+        let query = search_query(&params);
+
+        assert_eq!(
+            query,
+            vec![
+                ("limit", "25".to_string()),
+                ("offset", "50".to_string()),
+                ("hidebroken", "true".to_string()),
+                ("order", "clickcount".to_string()),
+                ("reverse", "true".to_string()),
+                ("name", "Jazz FM".to_string()),
+                ("tagList", "jazz,blues".to_string()),
+                ("countrycode", "DE".to_string()),
+                ("language", "en".to_string()),
+                ("bitrateMin", "128".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn bitrate_filter_keeps_only_matching_stations() {
+        let stations = vec![
+            station("low", 64),
+            station("mid", 128),
+            station("high", 192),
+        ];
+        let filtered = filter_stations_by_bitrate(stations, Some(128));
+
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|station| station.bitrate >= 128));
+        assert_eq!(filtered[0].stationuuid, "mid");
+        assert_eq!(filtered[1].stationuuid, "high");
+    }
+
+    #[test]
+    fn bitrate_filter_leaves_stations_unchanged_without_threshold() {
+        let stations = vec![station("a", 32), station("b", 256)];
+        let filtered = filter_stations_by_bitrate(stations.clone(), None);
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].stationuuid, stations[0].stationuuid);
+        assert_eq!(filtered[1].stationuuid, stations[1].stationuuid);
+    }
 }

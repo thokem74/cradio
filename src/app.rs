@@ -35,7 +35,7 @@ pub struct App {
     pub view_mode: StationViewMode,
     pub params: SearchParams,
     pub page: u32,
-    pub total_pages: u32,
+    pub has_next_page: bool,
     pub loading: bool,
     pub favorites_loading: bool,
     pub error: Option<String>,
@@ -62,7 +62,7 @@ impl App {
             view_mode: StationViewMode::AllStations,
             params: SearchParams::default(),
             page: 1,
-            total_pages: 1,
+            has_next_page: false,
             loading: false,
             favorites_loading: false,
             error: None,
@@ -101,18 +101,13 @@ impl App {
         self.scroll_offset = 0;
         self.loading = false;
         self.error = None;
-        if count == self.params.limit {
-            self.total_pages = self.page + 1;
-        } else {
-            self.total_pages = self.page;
-        }
+        self.has_next_page = count == self.params.limit;
     }
 
     pub fn set_favorite_stations(&mut self, stations: Vec<Station>) {
         self.favorite_stations = stations;
         self.favorites_loading = false;
         self.favorites_error = None;
-        self.error = None;
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -124,9 +119,15 @@ impl App {
     }
 
     pub fn set_favorites_error(&mut self, err: String) {
-        self.favorites_error = Some(err.clone());
-        self.error = Some(err);
+        self.favorites_error = Some(err);
         self.favorites_loading = false;
+    }
+
+    pub fn active_error(&self) -> Option<&str> {
+        match self.view_mode {
+            StationViewMode::AllStations => self.error.as_deref(),
+            StationViewMode::Favorites => self.favorites_error.as_deref(),
+        }
     }
 
     pub fn current_station_list(&self) -> &[Station] {
@@ -215,26 +216,32 @@ impl App {
         }
     }
 
-    pub fn next_page(&mut self) {
+    pub fn next_page(&mut self) -> bool {
         if self.view_mode != StationViewMode::AllStations {
-            return;
+            return false;
         }
-        if self.page < self.total_pages {
+        if self.has_next_page {
             self.page += 1;
             self.params.offset = (self.page - 1) * self.params.limit;
             self.loading = true;
+            return true;
         }
+
+        false
     }
 
-    pub fn prev_page(&mut self) {
+    pub fn prev_page(&mut self) -> bool {
         if self.view_mode != StationViewMode::AllStations {
-            return;
+            return false;
         }
         if self.page > 1 {
             self.page -= 1;
             self.params.offset = (self.page - 1) * self.params.limit;
             self.loading = true;
+            return true;
         }
+
+        false
     }
 
     pub fn active_field_mut(&mut self) -> Option<&mut String> {
@@ -261,6 +268,20 @@ impl App {
 
     pub fn volume_display(&self) -> u8 {
         self.volume
+    }
+
+    pub fn stations_title(&self) -> String {
+        match self.view_mode {
+            StationViewMode::AllStations => {
+                let suffix = if self.has_next_page {
+                    " - more available"
+                } else {
+                    " - end reached"
+                };
+                format!(" Stations - Page {}{} ", self.page, suffix)
+            }
+            StationViewMode::Favorites => " Favorites ".to_string(),
+        }
     }
 }
 
@@ -324,5 +345,52 @@ mod tests {
 
         app.set_view_mode(StationViewMode::AllStations);
         assert_eq!(app.view_mode, StationViewMode::AllStations);
+    }
+
+    #[test]
+    fn removing_favorite_in_favorites_view_updates_selection_safely() {
+        let mut app = App::new();
+        let first = station("id-1", "One", "https://one");
+        let second = station("id-2", "Two", "https://two");
+
+        app.stations = vec![first.clone(), second.clone()];
+        let _ = app.toggle_favorite_for_selected();
+        app.selected = 1;
+        let _ = app.toggle_favorite_for_selected();
+
+        app.favorite_stations = vec![first, second];
+        app.set_view_mode(StationViewMode::Favorites);
+        app.selected = 1;
+
+        let removed = app.toggle_favorite_for_selected();
+
+        assert_eq!(removed, Some(false));
+        assert_eq!(app.favorite_stations.len(), 1);
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.favorite_stations[0].stationuuid, "id-1");
+    }
+
+    #[test]
+    fn favorites_errors_stay_scoped_to_favorites_view() {
+        let mut app = App::new();
+        app.set_error("station search failed".to_string());
+        app.set_view_mode(StationViewMode::Favorites);
+        app.set_favorites_error("favorites refresh failed".to_string());
+
+        assert_eq!(app.active_error(), Some("favorites refresh failed"));
+
+        app.set_view_mode(StationViewMode::AllStations);
+        assert_eq!(app.active_error(), Some("station search failed"));
+    }
+
+    #[test]
+    fn stations_title_uses_has_next_page_instead_of_speculative_total() {
+        let mut app = App::new();
+        app.page = 3;
+        app.has_next_page = true;
+        assert_eq!(app.stations_title(), " Stations - Page 3 - more available ");
+
+        app.has_next_page = false;
+        assert_eq!(app.stations_title(), " Stations - Page 3 - end reached ");
     }
 }

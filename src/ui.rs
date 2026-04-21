@@ -253,16 +253,7 @@ fn draw_station_list(frame: &mut Frame, app: &App, table_state: &mut TableState,
             .collect()
     };
 
-    let title = match app.view_mode {
-        StationViewMode::AllStations => {
-            if app.total_pages > 0 {
-                format!(" Stations — Page {}/{} ", app.page, app.total_pages)
-            } else {
-                " Stations ".to_string()
-            }
-        }
-        StationViewMode::Favorites => " Favorites ".to_string(),
-    };
+    let title = app.stations_title();
 
     let table = Table::new(
         rows,
@@ -365,10 +356,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::NONE));
     frame.render_widget(footer, area);
 
-    if let Some(err) = &app.error {
+    if let Some(err) = app.active_error() {
         let popup_area = centered_rect(60, 20, frame.area());
         frame.render_widget(Clear, popup_area);
-        let popup = Paragraph::new(err.as_str())
+        let popup = Paragraph::new(err)
             .style(Style::default().fg(Color::Red))
             .block(
                 Block::default()
