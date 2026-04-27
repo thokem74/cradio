@@ -131,16 +131,49 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     KeyCode::Up => app.select_prev(),
                     KeyCode::Enter => {
                         if let Some(station) = app.selected_station().cloned() {
-                            let url = if !station.url_resolved.is_empty() {
-                                station.url_resolved.clone()
-                            } else {
-                                station.url.clone()
-                            };
-                            if let Some(err) = player.play(&url) {
-                                app.error = Some(err);
-                            } else {
-                                app.current_station = Some(station);
-                                app.error = None;
+                            let mut playback_urls = Vec::new();
+                            if !station.url_resolved.is_empty() {
+                                playback_urls.push(("resolved", station.url_resolved.clone()));
+                            }
+                            if !station.url.is_empty()
+                                && playback_urls.iter().all(|(_, url)| url != &station.url)
+                            {
+                                playback_urls.push(("original", station.url.clone()));
+                            }
+
+                            if let Ok(api_urls) =
+                                api::fetch_station_stream_urls(&http_client, &station.stationuuid)
+                                    .await
+                            {
+                                for url in api_urls {
+                                    if playback_urls.iter().all(|(_, existing)| existing != &url) {
+                                        playback_urls.push(("radio-browser", url));
+                                    }
+                                }
+                            }
+
+                            let mut last_error = None;
+                            let mut played = false;
+                            for (label, url) in playback_urls {
+                                match player.play(&url) {
+                                    Some(err) => {
+                                        last_error =
+                                            Some(format!("{} stream failed: {}", label, err));
+                                    }
+                                    None => {
+                                        app.current_station = Some(station.clone());
+                                        app.error = None;
+                                        played = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if !played {
+                                app.current_station = None;
+                                app.error = Some(last_error.unwrap_or_else(|| {
+                                    "No playable stream URL available for this station".to_string()
+                                }));
                             }
                         }
                     }

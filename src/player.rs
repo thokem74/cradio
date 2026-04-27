@@ -1,237 +1,305 @@
-use rodio::{Decoder, OutputStream, Sink};
 #[cfg(target_os = "linux")]
-use std::sync::{Mutex, OnceLock};
-use stream_download::source::DecodeError;
-use stream_download::storage::temp::TempStorageProvider;
-use stream_download::{Settings, StreamDownload};
-use tokio::runtime::Handle;
-use tokio::task;
+mod imp {
+    use std::io::Write;
+    use std::process::{Child, ChildStdin, Command, Stdio};
 
-pub struct Player {
-    backend: Box<dyn PlaybackBackend>,
-}
+    pub struct Player {
+        process: Option<Child>,
+        stdin: Option<ChildStdin>,
+        volume: u8,
+    }
 
-trait PlaybackBackend {
-    fn play(&mut self, url: &str) -> Option<String>;
-    fn stop(&mut self);
-    fn set_volume(&mut self, percent: u8);
-    fn volume(&self) -> u8;
-    fn is_playing(&self) -> bool;
-}
-
-pub struct NativePlayer {
-    stream: Option<OutputStream>,
-    sink: Option<Sink>,
-    volume: u8,
-}
-
-impl Player {
-    pub fn new() -> Self {
-        Self {
-            backend: Box::new(NativePlayer::new()),
+    impl Player {
+        pub fn new() -> Self {
+            Self {
+                process: None,
+                stdin: None,
+                volume: 50,
+            }
         }
-    }
 
-    pub fn play(&mut self, url: &str) -> Option<String> {
-        self.backend.play(url)
-    }
+        pub fn play(&mut self, url: &str) -> Option<String> {
+            self.stop();
 
-    pub fn stop(&mut self) {
-        self.backend.stop();
-    }
+            let mut cmd = Command::new("cvlc");
+            cmd.args([
+                "--no-video",
+                "--quiet",
+                "--intf",
+                "rc",
+                "--rc-fake-tty",
+                "--volume",
+                &self.vlc_volume().to_string(),
+                url,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
 
-    #[allow(dead_code)]
-    pub fn is_playing(&self) -> bool {
-        self.backend.is_playing()
-    }
-
-    pub fn volume_up(&mut self) {
-        let next = self.volume().saturating_add(5).min(100);
-        self.backend.set_volume(next);
-    }
-
-    pub fn volume_down(&mut self) {
-        let next = self.volume().saturating_sub(5);
-        self.backend.set_volume(next);
-    }
-
-    pub fn volume(&self) -> u8 {
-        self.backend.volume()
-    }
-}
-
-impl NativePlayer {
-    fn new() -> Self {
-        Self {
-            stream: None,
-            sink: None,
-            volume: 50,
-        }
-    }
-
-    fn build_stream(url: &str) -> Result<Decoder<StreamDownload<TempStorageProvider>>, String> {
-        let url = url
-            .parse()
-            .map_err(|e| format!("Invalid stream URL: {}", e))?;
-        let reader = task::block_in_place(|| {
-            Handle::current().block_on(async move {
-                match StreamDownload::new_http(url, TempStorageProvider::new(), Settings::default())
-                    .await
-                {
-                    Ok(reader) => Ok(reader),
-                    Err(err) => Err(err.decode_error().await),
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    self.stdin = child.stdin.take();
+                    self.process = Some(child);
+                    None
                 }
-            })
-        })
-        .map_err(|msg| format!("Network stream open failure: {}", msg))?;
+                Err(err) => {
+                    self.process = None;
+                    self.stdin = None;
+                    Some(match err.kind() {
+                        std::io::ErrorKind::NotFound => {
+                            "VLC command-line player not found; install VLC and ensure `cvlc` is on PATH.".to_string()
+                        }
+                        _ => format!("Failed to start VLC playback: {}", err),
+                    })
+                }
+            }
+        }
 
-        Decoder::new(reader).map_err(|e| format!("Unsupported or undecodable stream format: {}", e))
+        pub fn stop(&mut self) {
+            if let Some(mut child) = self.process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            self.stdin = None;
+        }
+
+        #[allow(dead_code)]
+        pub fn is_playing(&self) -> bool {
+            self.process.is_some()
+        }
+
+        pub fn volume_up(&mut self) {
+            let next = self.volume.saturating_add(5).min(100);
+            self.set_volume(next);
+        }
+
+        pub fn volume_down(&mut self) {
+            let next = self.volume.saturating_sub(5);
+            self.set_volume(next);
+        }
+
+        pub fn volume(&self) -> u8 {
+            self.volume
+        }
+
+        fn set_volume(&mut self, percent: u8) {
+            self.volume = percent.min(100);
+            let _ = self.send_vlc_command(&format!("volume {}\n", self.vlc_volume()));
+        }
+
+        fn send_vlc_command(&mut self, cmd: &str) -> std::io::Result<()> {
+            if let Some(stdin) = &mut self.stdin {
+                stdin.write_all(cmd.as_bytes())?;
+                stdin.flush()?;
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "VLC stdin not available",
+                ))
+            }
+        }
+
+        fn vlc_volume(&self) -> u32 {
+            (self.volume as u32 * 256) / 100
+        }
     }
 
-    fn set_sink_volume(&self) {
-        if let Some(sink) = &self.sink {
-            sink.set_volume(self.volume as f32 / 100.0);
+    impl Drop for Player {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Player;
+
+        #[test]
+        fn player_starts_at_expected_volume() {
+            let player = Player::new();
+            assert_eq!(player.volume(), 50);
+            assert!(!player.is_playing());
+        }
+
+        #[test]
+        fn volume_changes_are_clamped() {
+            let mut player = Player::new();
+            for _ in 0..20 {
+                player.volume_up();
+            }
+            assert_eq!(player.volume(), 100);
+
+            for _ in 0..30 {
+                player.volume_down();
+            }
+            assert_eq!(player.volume(), 0);
+        }
+
+        #[test]
+        fn stop_is_safe_without_running_process() {
+            let mut player = Player::new();
+            player.stop();
+            assert!(!player.is_playing());
+        }
+
+        #[test]
+        fn missing_cvlc_returns_clear_error() {
+            let mut player = Player::new();
+            let original_path = std::env::var_os("PATH");
+            unsafe {
+                std::env::set_var("PATH", "");
+            }
+
+            let err = player
+                .play("http://example.invalid/stream.mp3")
+                .expect("missing cvlc should return an error");
+
+            match original_path {
+                Some(path) => unsafe { std::env::set_var("PATH", path) },
+                None => unsafe { std::env::remove_var("PATH") },
+            }
+
+            assert!(err.contains("cvlc"));
         }
     }
 }
 
-#[cfg(target_os = "linux")]
-fn suppress_alsa_errors() -> AlsaErrorSilencer {
-    static ALSA_HANDLER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let lock = ALSA_HANDLER_LOCK.get_or_init(|| Mutex::new(()));
-    let guard = lock.lock().expect("alsa handler lock poisoned");
+#[cfg(target_os = "windows")]
+mod imp {
+    use windows::{
+        Foundation::Uri,
+        Media::{Core::MediaSource, Playback::MediaPlayer},
+        core::HSTRING,
+    };
 
-    unsafe extern "C" fn noop_alsa_error_handler(
-        _file: *const std::os::raw::c_char,
-        _line: std::os::raw::c_int,
-        _function: *const std::os::raw::c_char,
-        _err: std::os::raw::c_int,
-        _fmt: *const std::os::raw::c_char,
-        _arg: *mut alsa_sys::__va_list_tag,
-    ) {
+    pub struct Player {
+        player: Option<MediaPlayer>,
+        volume: u8,
+        is_playing: bool,
     }
 
-    // ALSA emits diagnostics directly to stderr, which would corrupt the TUI.
-    let previous_handler =
-        unsafe { alsa_sys::snd_lib_error_set_local(Some(noop_alsa_error_handler)) };
+    impl Player {
+        pub fn new() -> Self {
+            Self {
+                player: None,
+                volume: 50,
+                is_playing: false,
+            }
+        }
 
-    AlsaErrorSilencer {
-        _guard: guard,
-        previous_handler,
+        pub fn play(&mut self, url: &str) -> Option<String> {
+            let uri = match Uri::CreateUri(&HSTRING::from(url)) {
+                Ok(uri) => uri,
+                Err(err) => return Some(format!("Invalid stream URL: {}", err)),
+            };
+
+            let source = match MediaSource::CreateFromUri(&uri) {
+                Ok(source) => source,
+                Err(err) => return Some(format!("Failed to create Windows media source: {}", err)),
+            };
+
+            let player = match MediaPlayer::new() {
+                Ok(player) => player,
+                Err(err) => return Some(format!("Windows media backend unavailable: {}", err)),
+            };
+
+            let _ = player.SetVolume(self.volume as f64 / 100.0);
+            if let Err(err) = player.SetSource(&source) {
+                return Some(format!(
+                    "Failed to configure Windows playback source: {}",
+                    err
+                ));
+            }
+            if let Err(err) = player.Play() {
+                return Some(format!("Failed to start Windows playback: {}", err));
+            }
+
+            self.player = Some(player);
+            self.is_playing = true;
+            None
+        }
+
+        pub fn stop(&mut self) {
+            if let Some(player) = &self.player {
+                let _ = player.Pause();
+            }
+            self.player = None;
+            self.is_playing = false;
+        }
+
+        #[allow(dead_code)]
+        pub fn is_playing(&self) -> bool {
+            self.is_playing
+        }
+
+        pub fn volume_up(&mut self) {
+            let next = self.volume.saturating_add(5).min(100);
+            self.set_volume(next);
+        }
+
+        pub fn volume_down(&mut self) {
+            let next = self.volume.saturating_sub(5);
+            self.set_volume(next);
+        }
+
+        pub fn volume(&self) -> u8 {
+            self.volume
+        }
+
+        fn set_volume(&mut self, percent: u8) {
+            self.volume = percent.min(100);
+            if let Some(player) = &self.player {
+                let _ = player.SetVolume(self.volume as f64 / 100.0);
+            }
+        }
     }
-}
 
-#[cfg(target_os = "linux")]
-struct AlsaErrorSilencer {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    previous_handler: alsa_sys::snd_local_error_handler_t,
-}
+    impl Drop for Player {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
 
-#[cfg(target_os = "linux")]
-impl Drop for AlsaErrorSilencer {
-    fn drop(&mut self) {
-        unsafe {
-            alsa_sys::snd_lib_error_set_local(self.previous_handler);
+    #[cfg(test)]
+    mod tests {
+        use super::Player;
+
+        #[test]
+        fn player_starts_at_expected_volume() {
+            let player = Player::new();
+            assert_eq!(player.volume(), 50);
+            assert!(!player.is_playing());
+        }
+
+        #[test]
+        fn volume_changes_are_clamped() {
+            let mut player = Player::new();
+            for _ in 0..20 {
+                player.volume_up();
+            }
+            assert_eq!(player.volume(), 100);
+
+            for _ in 0..30 {
+                player.volume_down();
+            }
+            assert_eq!(player.volume(), 0);
+        }
+
+        #[test]
+        fn invalid_url_returns_clear_error() {
+            let mut player = Player::new();
+            let err = player.play("not a url").expect("invalid url should fail");
+            assert!(err.contains("Invalid stream URL"));
+        }
+
+        #[test]
+        fn stop_is_safe_before_play() {
+            let mut player = Player::new();
+            player.stop();
+            assert!(!player.is_playing());
         }
     }
 }
 
-impl PlaybackBackend for NativePlayer {
-    fn play(&mut self, url: &str) -> Option<String> {
-        self.stop();
-
-        #[cfg(target_os = "linux")]
-        let _alsa_silencer = suppress_alsa_errors();
-
-        let (stream, stream_handle) = match OutputStream::try_default() {
-            Ok(stream) => stream,
-            Err(err) => return Some(format!("Audio output device unavailable: {}", err)),
-        };
-
-        let sink = match Sink::try_new(&stream_handle) {
-            Ok(sink) => sink,
-            Err(err) => return Some(format!("Audio output device unavailable: {}", err)),
-        };
-        sink.set_volume(self.volume as f32 / 100.0);
-
-        let source = match Self::build_stream(url) {
-            Ok(source) => source,
-            Err(err) => return Some(err),
-        };
-
-        sink.append(source);
-        self.stream = Some(stream);
-        self.sink = Some(sink);
-        None
-    }
-
-    fn stop(&mut self) {
-        if let Some(sink) = self.sink.take() {
-            sink.stop();
-        }
-        self.stream = None;
-    }
-
-    fn set_volume(&mut self, percent: u8) {
-        self.volume = percent.min(100);
-        self.set_sink_volume();
-    }
-
-    fn volume(&self) -> u8 {
-        self.volume
-    }
-
-    fn is_playing(&self) -> bool {
-        self.sink
-            .as_ref()
-            .map(|sink| !sink.empty())
-            .unwrap_or(false)
-    }
-}
-
-impl Drop for Player {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{NativePlayer, PlaybackBackend, Player};
-
-    #[test]
-    fn player_starts_at_expected_volume() {
-        let player = Player::new();
-        assert_eq!(player.volume(), 50);
-        assert!(!player.is_playing());
-    }
-
-    #[test]
-    fn volume_changes_are_clamped() {
-        let mut player = Player::new();
-
-        for _ in 0..20 {
-            player.volume_up();
-        }
-        assert_eq!(player.volume(), 100);
-
-        for _ in 0..30 {
-            player.volume_down();
-        }
-        assert_eq!(player.volume(), 0);
-    }
-
-    #[test]
-    fn play_failure_returns_error() {
-        let mut player = NativePlayer::new();
-        let err = player.play("not a url").expect("invalid url must fail");
-        assert!(err.contains("Invalid stream URL"));
-    }
-
-    #[test]
-    fn stop_clears_playback_state() {
-        let mut player = Player::new();
-        player.stop();
-        assert!(!player.is_playing());
-    }
-}
+pub use imp::Player;

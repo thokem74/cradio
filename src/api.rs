@@ -181,3 +181,61 @@ pub async fn fetch_stations_by_uuids(
 
     (stations, failed_uuids)
 }
+
+pub async fn fetch_station_stream_urls(
+    client: &reqwest::Client,
+    station_uuid: &str,
+) -> Result<Vec<String>, String> {
+    let server = resolve_api_server();
+    let m3u_url = format!("https://{}/m3u/url/{}", server, station_uuid);
+    let m3u_text = client
+        .get(&m3u_url)
+        .header("User-Agent", "cradio/0.1")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch station playlist: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("Failed to fetch station playlist: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read station playlist: {}", e))?;
+
+    let mut urls = parse_m3u_urls(&m3u_text);
+    if urls.is_empty() {
+        let pls_url = format!("https://{}/pls/url/{}", server, station_uuid);
+        let pls_text = client
+            .get(&pls_url)
+            .header("User-Agent", "cradio/0.1")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch station playlist: {}", e))?
+            .error_for_status()
+            .map_err(|e| format!("Failed to fetch station playlist: {}", e))?
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read station playlist: {}", e))?;
+        urls = parse_pls_urls(&pls_text);
+    }
+
+    Ok(urls)
+}
+
+fn parse_m3u_urls(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_pls_urls(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("File"))
+        .filter_map(|line| line.split_once('='))
+        .map(|(_, url)| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .collect()
+}

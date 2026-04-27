@@ -5,7 +5,8 @@ Interactive terminal app for listening to internet radio on Linux and Windows 10
 
 - Browse and search radio stations from [radio-browser.info](https://www.radio-browser.info/)
 - Filter by station name, tags, country code (ISO 3166-1), language (ISO 639), and bitrate
-- Play radio streams with a native Rust audio backend
+- Linux playback through VLC for broad station compatibility
+- Windows 10/11 playback through a native Windows media backend
 - Adjust playback volume from the keyboard
 - Save favorites in an OS-native per-user config directory
 - Page through large station result sets
@@ -22,11 +23,11 @@ Interactive terminal app for listening to internet radio on Linux and Windows 10
 
 ### Linux
 
-- ALSA development headers for native audio output
+- VLC with the `cvlc` command available on `PATH`
 - Debian/Ubuntu example:
 
 ```bash
-sudo apt install pkg-config libasound2-dev
+sudo apt install vlc
 ```
 
 ### Windows
@@ -46,6 +47,11 @@ cargo fmt --check
 
 ```bash
 cargo build --release
+
+#cargo build --release --target x86_64-pc-windows-msvc
+rustup target add x86_64-pc-windows-gnu
+cargo build --release --target x86_64-pc-windows-gnu
+
 ```
 
 The binary will be at `target/release/cradio` on Linux and `target/release/cradio.exe` on Windows.
@@ -95,14 +101,14 @@ Press `Enter` in filter mode to apply the search and return to the station list.
 
 ### Linux
 
-- If the build fails while compiling audio dependencies, install `pkg-config` and `libasound2-dev`.
-- If no sound device is available, `cradio` will show an audio output error in the UI.
+- If playback fails immediately, verify that `cvlc` is installed and available on `PATH`.
+- VLC handles a wider range of live radio streams than the previous native Linux backend, so Linux playback now prefers VLC intentionally.
 
 ### Windows
 
 - Run the app in Windows Terminal or PowerShell if the console host behaves oddly with raw mode.
-- If playback fails, confirm the selected station is reachable and that Windows has an active output device.
-- Some rare stream formats may fail to decode; those stations will surface an in-app playback error.
+- If playback fails, confirm Windows has an active output device and that the edition includes the required media components.
+- Stream URL fallback still comes only from Radio Browser data (`url_resolved`, `url`, and Radio Browser playlist URLs).
 
 ## License
 
