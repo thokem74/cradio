@@ -57,20 +57,14 @@ rustup target add x86_64-pc-windows-gnu
 cargo build --release --target x86_64-pc-windows-gnu
 ```
 
-Compile a Windows MSVC build from Windows:
+Cross-compile a Windows MSVC build from Linux:
 
 ```bash
+sudo apt install clang lld
 rustup target add x86_64-pc-windows-msvc
-cargo build --release --target x86_64-pc-windows-msvc
+cargo install --locked cargo-xwin
+cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
-
-You also need the Microsoft C++ build tools installed. 
-Easiest route:
-1. Install Visual Studio Build Tools
-2. Select Desktop development with C++
-3. Make sure the Windows SDK and MSVC toolchain are included
-4. Open PowerShell or Windows Terminal in the project folder
-5. Run: cargo build --release --target x86_64-pc-windows-msvc
 
 The binary will be at `target/release/cradio` on Linux, `target/release/cradio.exe` on native Windows builds, and `target/x86_64-pc-windows-gnu/release/cradio.exe` for the Linux cross-compile command above.
 
@@ -112,8 +106,8 @@ Press `Enter` in filter mode to apply the search and return to the station list.
 
 Favorites are persisted as a JSON array of objects: `[{"stationuuid":"...","name":"...","url":"..."}]`.
 
-- Linux: usually `~/.config/cradio/favorites.json`
-- Windows: `%APPDATA%\cradio\favorites.json`
+- Linux: `~/.config/cradio/favorites.json`
+- Windows: `%APPDATA%\cradio\config\favorites.json`
 
 No migration is performed from the older Linux-only `~/.cradio/favorites.json` path.
 
