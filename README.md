@@ -24,9 +24,11 @@ Interactive terminal app for listening to internet radio on Linux and Windows 10
 ### Linux
 
 - `cvlc` (VLC media player CLI)
+- `pkg-config` (utility to find OpenSSL)
+- `libssl-dev` (development packages of openssl)
 
 ```bash
-sudo apt install vlc
+sudo apt install vlc pkg-config libssl-dev
 ```
 
 ### Windows
@@ -53,6 +55,7 @@ cargo build --release
 Cross-compile a Windows GNU build from Linux:
 
 ```bash
+sudo apt install gcc-mingw-w64-x86-64
 rustup target add x86_64-pc-windows-gnu
 cargo build --release --target x86_64-pc-windows-gnu
 ```
@@ -66,7 +69,10 @@ cargo install --locked cargo-xwin
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-The binary will be at `target/release/cradio` on Linux, `target/release/cradio.exe` on native Windows builds, and `target/x86_64-pc-windows-gnu/release/cradio.exe` for the Linux cross-compile command above.
+The binary will be at:
+`target/release/cradio` for Linux 
+`target/x86_64-pc-windows-gnu/release/cradio.exe` for the Linux cross-compile via Windows GNU
+`target/x86_64-pc-windows-msvc/release/cradio.exe` for the Linux cross-compile via Windows MSVC
 
 ## Usage
 
