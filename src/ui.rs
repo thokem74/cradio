@@ -43,7 +43,7 @@ fn draw_header(frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            " — Internet Radio",
+            concat!(" — Internet Radio — v", env!("CARGO_PKG_VERSION")),
             Style::default().fg(NEON_CYAN).add_modifier(Modifier::BOLD),
         ),
     ]))
