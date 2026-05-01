@@ -74,6 +74,19 @@ The binary will be at:
 `target/x86_64-pc-windows-gnu/release/cradio.exe` for the Linux cross-compile via Windows GNU
 `target/x86_64-pc-windows-msvc/release/cradio.exe` for the Linux cross-compile via Windows MSVC
 
+## Release Checklist
+
+1. Update `version` in `Cargo.toml` using Semantic Versioning.
+2. Update `CHANGELOG.md` with the release date and notable changes.
+3. Commit the release changes, tag the commit, and push both:
+
+```bash
+git add Cargo.toml Cargo.lock CHANGELOG.md README.md
+git commit -m "Release vX.Y.Z"
+git tag vX.Y.Z
+git push origin main --tags or git push origin vX.Y.Z
+```
+
 ## Usage
 
 ```bash
