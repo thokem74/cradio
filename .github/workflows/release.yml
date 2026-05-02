@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            artifact_suffix: x86_64-unknown-linux-gnu
+            binary_name: cradio
+            archive_ext: tar.gz
+          - name: Windows
+            os: windows-latest
+            artifact_suffix: x86_64-pc-windows-msvc
+            binary_name: cradio.exe
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Stage release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package_name="cradio-v${version}-${{ matrix.artifact_suffix }}"
+
+          mkdir -p "release/${package_name}"
+          cp "target/release/${{ matrix.binary_name }}" "release/${package_name}/"
+          cp README.md LICENSE CHANGELOG.md "release/${package_name}/"
+
+          echo "version=${version}" >> "${GITHUB_ENV}"
+          echo "package_name=${package_name}" >> "${GITHUB_ENV}"
+
+      - name: Package Linux release
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "release/${package_name}.tar.gz" -C release "${package_name}"
+
+      - name: Package Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "release/${env:package_name}" -DestinationPath "release/${env:package_name}.zip"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.package_name }}
+          path: release/${{ env.package_name }}.${{ matrix.archive_ext }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
