@@ -23,7 +23,7 @@ jobs:
         run: cargo test
 
       - name: Check code formatting and linting
-        run:
+        run: |
           cargo check
           cargo fmt --check
 
