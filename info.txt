@@ -1,5 +1,0 @@
----
-CHANGELOG.md
-
-Keep short sections like Added, Changed, Fixed
----
